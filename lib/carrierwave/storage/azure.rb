@@ -1,4 +1,4 @@
-require 'azure'
+require 'azure/storage/blob'
 
 module CarrierWave
   module Storage
@@ -15,10 +15,13 @@ module CarrierWave
 
       def connection
         @connection ||= begin
-          %i(storage_account_name storage_access_key storage_blob_host).each do |key|
-            ::Azure.config.send("#{key}=", uploader.send("azure_#{key}"))
-          end
-          ::Azure::BlobService.new
+          %i[storage_account_name storage_access_key storage_blob_host]
+            .inject({}) do |params, key|
+              azure_key = uploader.public_send("azure_#{key}")
+              params[key] = azure_key if azure_key
+              params
+            end
+            .tap { |params| return ::Azure::Storage::Blob::BlobService.create(params) }
         end
       end
 
