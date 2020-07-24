@@ -17,9 +17,8 @@ module CarrierWave
         @connection ||= begin
           %i[storage_account_name storage_access_key storage_blob_host]
             .inject({}) do |params, key|
-              azure_key = uploader.public_send("azure_#{key}")
-              params[key] = azure_key if azure_key
-              params
+              param = uploader.public_send("azure_#{key}")
+              param ? params.merge(key => param) : params
             end
             .tap { |params| return ::Azure::Storage::Blob::BlobService.create(params) }
         end
