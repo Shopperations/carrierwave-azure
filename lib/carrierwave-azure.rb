@@ -1,5 +1,5 @@
 require 'carrierwave'
-require 'carrierwave/azure/version'
+require 'azure/storage/blob'
 require 'carrierwave/storage/azure'
 
 class CarrierWave::Uploader::Base
