@@ -7,10 +7,12 @@ describe CarrierWave::Storage::Azure::File do
 
   let(:uploader) { TestUploader.new }
   let(:storage)  { CarrierWave::Storage::Azure.new uploader }
+  let(:sas_token) { 'sas_token' }
 
   describe '#url' do
     before do
       allow(uploader).to receive(:azure_container).and_return('test')
+      allow_any_instance_of(CarrierWave::Storage::Azure::File).to receive(:service_sas_token).and_return(sas_token)
     end
 
     subject { CarrierWave::Storage::Azure::File.new(uploader, storage.connection, 'dummy.txt').url }
@@ -21,7 +23,7 @@ describe CarrierWave::Storage::Azure::File do
       end
 
       it 'should return on asset_host' do
-        expect(subject).to eq 'http://example.com/test/dummy.txt'
+        expect(subject).to eq "http://example.com/test/dummy.txt?#{sas_token}"
       end
     end
 
@@ -31,7 +33,7 @@ describe CarrierWave::Storage::Azure::File do
       end
 
       it 'should return on asset_host' do
-        expect(subject).to eq 'http://example.com/test/dummy.txt'
+        expect(subject).to eq "http://example.com/test/dummy.txt"
       end
     end
   end

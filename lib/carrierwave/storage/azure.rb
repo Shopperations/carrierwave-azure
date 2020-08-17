@@ -42,12 +42,11 @@ module CarrierWave
 
         def url(options = {})
           path = ::File.join @uploader.azure_container, @path
-          service_sas_token = generate_service_sas_token(path)
 
           if @uploader.asset_host
             "#{@uploader.asset_host}/#{path}"
           else
-            "#{@connection.generate_uri(path).to_s}?#{service_sas_token}"
+            "#{@connection.generate_uri(path).to_s}?#{service_sas_token(path)}"
           end
         end
 
@@ -73,7 +72,7 @@ module CarrierWave
         end
 
         def filename
-          URI.decode(url).gsub(/.*\/(.*?$)/, '\1')
+          URI(url).path.split('/').last
         end
 
         def extension
@@ -108,7 +107,7 @@ module CarrierWave
           end
         end
 
-        def generate_service_sas_token(path)
+        def service_sas_token(path)
           @service_sas_token ||= ::Azure::Storage::Common::Core::Auth::SharedAccessSignature.new(
             @uploader.azure_storage_account_name,
             @uploader.azure_storage_access_key
