@@ -42,10 +42,12 @@ module CarrierWave
 
         def url(options = {})
           path = ::File.join @uploader.azure_container, @path
+          service_sas_token = generate_service_sas_token(path)
+
           if @uploader.asset_host
             "#{@uploader.asset_host}/#{path}"
           else
-            @connection.generate_uri(path).to_s
+            "#{@connection.generate_uri(path).to_s}?#{service_sas_token}"
           end
         end
 
@@ -104,6 +106,13 @@ module CarrierWave
             @connection.get_blob @uploader.azure_container, @path
           rescue ::Azure::Core::Http::HTTPError
           end
+        end
+
+        def generate_service_sas_token(path)
+          @service_sas_token ||= ::Azure::Storage::Common::Core::Auth::SharedAccessSignature.new(
+            @uploader.azure_storage_account_name,
+            @uploader.azure_storage_access_key
+          ).tap { |generator| return generator.generate_service_sas_token(path, service: 'b') }
         end
       end
     end
