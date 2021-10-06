@@ -24,6 +24,16 @@ module CarrierWave
         end
       end
 
+      def cache!(new_file)
+        f = CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.cache_path)
+        f.store!(new_file)
+        f
+      end
+
+      def delete_dir!(path)
+        # do nothing, because there's no such things as 'empty directory'
+      end
+
       class File
         attr_reader :path
 
