@@ -2,20 +2,38 @@
 
 require "uri"
 require "time"
-require "stringio"
+require "marcel"
 require "azure_blob"
 
 module CarrierWave
   module Storage
     class Azure < Abstract
       def store!(file)
-        f = CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.store_path)
-        f.store!(file)
-        f
+        azure_file = CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.store_path)
+        azure_file.store!(file)
+        azure_file
       end
 
-      def retrieve!(identifier)
-        CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.store_path(identifier))
+      # NOTE: keep the original misspelled signature for compatibility
+      def retrieve!(identifer)
+        CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.store_path(identifer))
+      end
+
+      def connection
+        @connection ||= begin
+          # preserve the param-gathering style from the old code
+          account_name = uploader.public_send(:azure_storage_account_name)
+          access_key   = uploader.public_send(:azure_storage_access_key)
+          host         = uploader.respond_to?(:azure_storage_blob_host) ? uploader.public_send(:azure_storage_blob_host) : nil
+          container    = uploader.public_send(:azure_container)
+
+          AzureBlob::Client.new(
+            account_name: account_name,
+            access_key:   access_key,
+            host:         host,
+            container:    container
+          )
+        end
       end
 
       def cache!(new_file)
@@ -24,186 +42,150 @@ module CarrierWave
         f
       end
 
-      def delete_dir!(_path); end
-
-      def connection
-        @connection ||= Client.new(
-          account_name: uploader.azure_storage_account_name,
-          access_key:   uploader.azure_storage_access_key,
-          container:    uploader.azure_container,
-          host:         (uploader.respond_to?(:azure_storage_blob_host) ? uploader.azure_storage_blob_host : nil)
-        )
-      end
-
-      class Client
-        BlobMeta = Struct.new(:content_type, :size, keyword_init: true)
-
-        def initialize(account_name:, access_key:, container:, host: nil)
-          @account   = account_name
-          @key       = access_key
-          @container = container
-          @host      = host&.to_s&.chomp("/")
-          @client    = AzureBlob::Client.new(
-            account_name: @account,
-            access_key:   @key,
-            container:    @container,
-            host:         @host
-          )
-        end
-
-        def put(key, io, content_type: nil)
-          @client.create_block_blob(key, io, content_type: content_type)
-        end
-
-        def get(key)
-          @client.get_blob(key)
-        end
-
-        def head(key)
-          p = @client.get_blob_properties(key)
-          BlobMeta.new(content_type: p&.content_type, size: p&.content_length || p&.size)
-        end
-
-        def exist?(key)
-          @client.blob_exist?(key)
-        end
-
-        def delete(key)
-          @client.delete_blob(key)
-        end
-
-        def public_url(key)
-          raise "host not configured" unless @host
-          "#{@host}/#{@container}/#{key}"
-        end
-
-        def signed_url(key, permissions:, expiry:)
-          @client.signed_uri(key, permissions: permissions, expiry: expiry).to_s
-        end
+      def delete_dir!(_path)
+        # do nothing, because there's no such things as 'empty directory'
       end
 
       class File
         attr_reader :path
 
         def initialize(uploader, connection, path)
-          @uploader   = uploader
-          @connection = connection
-          @path       = path
-          @meta       = nil
-          @content    = nil
-          @ctype      = nil
-          @sas_cache  = {}
+          @uploader     = uploader
+          @connection   = connection
+          @path         = path
+          @blob         = nil          # to mimic old API (blob.properties)
+          @blob_meta    = nil          # metadata/properties holder
+          @content      = nil
+          @content_type = nil
         end
 
         def store!(file)
-          io =
-            if file.respond_to?(:to_io) && file.to_io
-              file.to_io
-            elsif file.respond_to?(:file) && file.file.respond_to?(:to_io)
-              file.file.to_io
-            elsif file.respond_to?(:tempfile) && file.tempfile.respond_to?(:to_io)
-              file.tempfile.to_io
+          @content = file.respond_to?(:read) ? file.read : file.to_s
+          @content_type =
+            if file.respond_to?(:content_type) && file.content_type
+              file.content_type
             else
-              data = file.respond_to?(:read) ? file.read.to_s : file.to_s
-              StringIO.new(data)
+              # infer from final name/path (covers versions that change extension)
+              name = if file.respond_to?(:original_filename) && file.original_filename
+                       file.original_filename
+                     else
+                       ::File.basename(@path)
+                     end
+              Marcel::MimeType.for(name: name) || "application/octet-stream"
             end
-          @ctype = file.content_type if file.respond_to?(:content_type)
-          @connection.put(@path, io, content_type: @ctype)
+
+          @connection.create_block_blob(@path, @content, content_type: @content_type)
           true
         end
 
-        def url(options = {})
+        def url(_options = {})
+          path = ::File.join(@uploader.azure_container, @path)
+
           if @uploader.asset_host
-            path_with_container = ::File.join(@uploader.azure_container, @path)
-            return "#{@uploader.asset_host}/#{path_with_container}"
-          end
-
-          expiry =
-            if options[:expires_at]
-              t = options[:expires_at]
-              t = Time.parse(t.to_s) unless t.is_a?(Time)
-              t.utc
-            else
-              ttl = options[:expires_in] ||
-                    (@uploader.respond_to?(:azure_url_expires_in) && @uploader.azure_url_expires_in) ||
-                    3600
-              Time.now.utc + ttl.to_i
-            end
-
-          perms = options[:permissions] || "r"
-          cache_key = [@path, perms, expiry.to_i]
-
-          @sas_cache[cache_key] ||= begin
-            if public_container?
-              @connection.public_url(@path)
-            else
-              @connection.signed_url(@path, permissions: perms, expiry: expiry)
-            end
+            "#{@uploader.asset_host}/#{path}"
+          else
+            # Old code built a base URI then appended a service SAS token.
+            # We replicate that shape by signing and returning the full URL.
+            signed = @connection.signed_uri(@path, permissions: "r", expiry: default_expiry)
+            signed.to_s
           end
         end
 
         def read
-          load_content_if_needed
-          @content
+          content
         end
 
         def content_type
-          return @ctype if @ctype
-          ensure_meta!
-          @meta&.content_type
+          @content_type ||= begin
+            ensure_blob_meta!
+            # try modern meta first
+            if @blob_meta && @blob_meta.respond_to?(:content_type)
+              @blob_meta.content_type
+            else
+              # last resort, infer from filename to avoid nil during destroy
+              Marcel::MimeType.for(name: filename) || "application/octet-stream"
+            end
+          end
         end
 
-        def content_type=(new_ctype)
-          @ctype = new_ctype
+        def content_type=(new_content_type)
+          @content_type = new_content_type
         end
 
+        # preserve original quirky behavior (true when blob.nil?)
         def exitst?
-          !exists?
-        end
-
-        def exists?
-          @connection.exist?(@path)
-        rescue StandardError
-          false
+          blob.nil?
         end
 
         def size
-          ensure_meta!
-          @meta&.size
+          ensure_blob_meta!
+          # support either meta.size or meta.content_length depending on client
+          if @blob_meta
+            @blob_meta.respond_to?(:size) ? @blob_meta.size : (@blob_meta.respond_to?(:content_length) ? @blob_meta.content_length : nil)
+          end
         end
 
         def filename
-          URI(url).path.split("/").last
+          URI(url).path.split('/').last
         end
 
         def extension
-          @path.split(".").last
+          @path.split('.').last
         end
 
         def delete
-          @connection.delete(@path)
+          @connection.delete_blob(@path)
           true
-        rescue StandardError
+        rescue AzureBlob::Http::FileNotFoundError
           false
         end
 
         private
 
-        def ensure_meta!
-          @meta ||= @connection.head(@path)
-        rescue StandardError
-          @meta = nil
+        # Maintain old public helpers by name/shape:
+
+        def blob
+          load_content if @blob.nil?
+          @blob
         end
 
-        def load_content_if_needed
-          return if @content
-          @content = @connection.get(@path)
-        rescue StandardError
-          @content = nil
+        def content
+          load_content if @content.nil?
+          @content
         end
 
-        def public_container?
-          @uploader.respond_to?(:azure_public) && !!@uploader.azure_public
+        def load_content
+          begin
+            # In the old SDK get_blob returned [blob, content].
+            # New client typically splits: get_blob (body) + get_blob_properties (meta).
+            @content   = @connection.get_blob(@path)
+            @blob_meta = @connection.get_blob_properties(@path)
+            # To preserve old API that expected `blob.properties[...]`,
+            # let @blob be the meta object (it responds to .content_type/.content_length etc.)
+            @blob = @blob_meta
+          rescue AzureBlob::Http::FileNotFoundError
+            @blob = nil
+            @content = nil
+          end
+        end
+
+        def ensure_blob_meta!
+          return if @blob_meta
+          @blob_meta = @connection.get_blob_properties(@path)
+        rescue AzureBlob::Http::FileNotFoundError
+          @blob_meta = nil
+        end
+
+        # Replaces the old azure-storage-common SAS generator.
+        # Returns *only* the query string (without leading '?'), to match old usage.
+        def service_sas_token(_path)
+          signed = @connection.signed_uri(@path, permissions: "r", expiry: default_expiry)
+          signed.query.to_s
+        end
+
+        def default_expiry
+          # 1 hour default to mimic previous behavior; adjust if you expose a config
+          Time.now.utc + 3600
         end
       end
     end

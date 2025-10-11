@@ -16,8 +16,9 @@ Gem::Specification.new do |gem|
   gem.test_files    = gem.files.grep(%r{^rspec})
   gem.require_paths = ['lib']
 
-  gem.add_dependency 'carrierwave'
+  gem.add_dependency 'carrierwave', '>= 2.2.6'
   gem.add_dependency "azure-blob"
+  gem.add_dependency 'marcel'
 
   gem.add_development_dependency 'rake'
   gem.add_development_dependency 'rspec', '~> 3'
