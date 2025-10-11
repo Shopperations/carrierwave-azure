@@ -1,17 +1,13 @@
-# frozen_string_literal: true
-
 require "uri"
-require "time"
-require "stringio"
-require "azure_blob"
+require "azure_blob" # provides AzureBlob::Client
 
 module CarrierWave
   module Storage
     class Azure < Abstract
       def store!(file)
-        f = CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.store_path)
-        f.store!(file)
-        f
+        azure_file = CarrierWave::Storage::Azure::File.new(uploader, connection, uploader.store_path)
+        azure_file.store!(file)
+        azure_file
       end
 
       def retrieve!(identifier)
@@ -24,61 +20,24 @@ module CarrierWave
         f
       end
 
-      def delete_dir!(_path); end
-
-      def connection
-        @connection ||= Client.new(
-          account_name: uploader.azure_storage_account_name,
-          access_key:   uploader.azure_storage_access_key,
-          container:    uploader.azure_container,
-          host:         (uploader.respond_to?(:azure_storage_blob_host) ? uploader.azure_storage_blob_host : nil)
-        )
+      def delete_dir!(_path)
+        # no-op; Azure Blob has no empty directories
       end
 
-      class Client
-        BlobMeta = Struct.new(:content_type, :size, keyword_init: true)
+      # Build or memoize the azure-blob client
+      def connection
+        @connection ||= begin
+          account_name = uploader.azure_storage_account_name
+          access_key   = uploader.azure_storage_access_key
+          container    = uploader.azure_container
+          host         = uploader.respond_to?(:azure_storage_blob_host) ? uploader.azure_storage_blob_host : nil
 
-        def initialize(account_name:, access_key:, container:, host: nil)
-          @account   = account_name
-          @key       = access_key
-          @container = container
-          @host      = host&.to_s&.chomp("/")
-          @client    = AzureBlob::Client.new(
-            account_name: @account,
-            access_key:   @key,
-            container:    @container,
-            host:         @host
+          AzureBlob::Client.new(
+            account_name: account_name,
+            access_key:   access_key,
+            container:    container,
+            host:         host
           )
-        end
-
-        def put(key, io, content_type: nil)
-          @client.create_block_blob(key, io, content_type: content_type)
-        end
-
-        def get(key)
-          @client.get_blob(key)
-        end
-
-        def head(key)
-          p = @client.get_blob_properties(key)
-          BlobMeta.new(content_type: p&.content_type, size: p&.content_length || p&.size)
-        end
-
-        def exist?(key)
-          @client.blob_exist?(key)
-        end
-
-        def delete(key)
-          @client.delete_blob(key)
-        end
-
-        def public_url(key)
-          raise "host not configured" unless @host
-          "#{@host}/#{@container}/#{key}"
-        end
-
-        def signed_url(key, permissions:, expiry:)
-          @client.signed_uri(key, permissions: permissions, expiry: expiry).to_s
         end
       end
 
@@ -89,56 +48,31 @@ module CarrierWave
           @uploader   = uploader
           @connection = connection
           @path       = path
-          @meta       = nil
+          @blob_meta  = nil
           @content    = nil
-          @ctype      = nil
-          @sas_cache  = {}
+          @content_type = nil
         end
 
+        # Upload the IO or string content
         def store!(file)
-          io =
-            if file.respond_to?(:to_io) && file.to_io
-              file.to_io
-            elsif file.respond_to?(:file) && file.file.respond_to?(:to_io)
-              file.file.to_io
-            elsif file.respond_to?(:tempfile) && file.tempfile.respond_to?(:to_io)
-              file.tempfile.to_io
-            else
-              data = file.respond_to?(:read) ? file.read.to_s : file.to_s
-              StringIO.new(data)
-            end
-          @ctype = file.content_type if file.respond_to?(:content_type)
-          @connection.put(@path, io, content_type: @ctype)
+          io = file.respond_to?(:to_io) ? file.to_io : StringIO.new(file.read)
+          @content_type = file.content_type if file.respond_to?(:content_type)
+          @connection.create_block_blob(@path, io, content_type: @content_type)
           true
         end
 
+        # Public or signed URL
         def url(options = {})
+          full_key = @path
+
           if @uploader.asset_host
-            path_with_container = ::File.join(@uploader.azure_container, @path)
-            return "#{@uploader.asset_host}/#{path_with_container}"
-          end
-
-          expiry =
-            if options[:expires_at]
-              t = options[:expires_at]
-              t = Time.parse(t.to_s) unless t.is_a?(Time)
-              t.utc
-            else
-              ttl = options[:expires_in] ||
-                    (@uploader.respond_to?(:azure_url_expires_in) && @uploader.azure_url_expires_in) ||
-                    3600
-              Time.now.utc + ttl.to_i
-            end
-
-          perms = options[:permissions] || "r"
-          cache_key = [@path, perms, expiry.to_i]
-
-          @sas_cache[cache_key] ||= begin
-            if public_container?
-              @connection.public_url(@path)
-            else
-              @connection.signed_url(@path, permissions: perms, expiry: expiry)
-            end
+            # Keep old behavior: asset_host + container/path
+            path = ::File.join(@uploader.azure_container, full_key)
+            "#{@uploader.asset_host}/#{path}"
+          else
+            # Signed URI (read). Default 1 hour, override via :expires_in
+            expires_in = (options[:expires_in] || 3600).to_i
+            @connection.signed_uri(full_key, permissions: "r", expiry: Time.now.utc + expires_in).to_s
           end
         end
 
@@ -148,28 +82,29 @@ module CarrierWave
         end
 
         def content_type
-          return @ctype if @ctype
-          ensure_meta!
-          @meta&.content_type
+          return @content_type if @content_type
+          ensure_blob_meta!
+          @blob_meta&.content_type
         end
 
-        def content_type=(new_ctype)
-          @ctype = new_ctype
+        def content_type=(new_type)
+          @content_type = new_type
         end
 
+        # Keep the typo for compatibility (mirrors existing API)
         def exitst?
           !exists?
         end
 
         def exists?
-          @connection.exist?(@path)
-        rescue StandardError
+          @connection.blob_exist?(@path)
+        rescue AzureBlob::Http::FileNotFoundError
           false
         end
 
         def size
-          ensure_meta!
-          @meta&.size
+          ensure_blob_meta!
+          @blob_meta&.size
         end
 
         def filename
@@ -181,29 +116,25 @@ module CarrierWave
         end
 
         def delete
-          @connection.delete(@path)
+          @connection.delete_blob(@path)
           true
-        rescue StandardError
+        rescue AzureBlob::Http::FileNotFoundError
           false
         end
 
         private
 
-        def ensure_meta!
-          @meta ||= @connection.head(@path)
-        rescue StandardError
-          @meta = nil
+        def ensure_blob_meta!
+          @blob_meta ||= @connection.get_blob_properties(@path)
+        rescue AzureBlob::Http::FileNotFoundError
+          @blob_meta = nil
         end
 
         def load_content_if_needed
           return if @content
-          @content = @connection.get(@path)
-        rescue StandardError
+          @content = @connection.get_blob(@path)
+        rescue AzureBlob::Http::FileNotFoundError
           @content = nil
-        end
-
-        def public_container?
-          @uploader.respond_to?(:azure_public) && !!@uploader.azure_public
         end
       end
     end
