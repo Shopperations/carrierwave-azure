@@ -18,6 +18,7 @@ Gem::Specification.new do |gem|
 
   gem.add_dependency 'carrierwave'
   gem.add_dependency "azure-blob"
+  gem.add_dependency 'marcel'
 
   gem.add_development_dependency 'rake'
   gem.add_development_dependency 'rspec', '~> 3'
