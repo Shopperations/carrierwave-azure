@@ -14,11 +14,10 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Ruby
-      uses: ruby/setup-ruby@ec106b438a1ff6ff109590de34ddc62c540232e0
+      uses: ruby/setup-ruby@v1
       with:
         ruby-version: '3.2'
-    - name: Install dependencies
-      run: bundle install
+        bundler-cache: true
     - name: Init credentials
       run: mv spec/environment.ci.rb spec/environment.rb
     - name: Run tests
