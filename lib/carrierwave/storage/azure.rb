@@ -78,7 +78,7 @@ module CarrierWave
           true
         end
 
- def url(_options = {})
+        def url(_options = {})
           path = ::File.join(@uploader.azure_container, @path)
 
           if @uploader.asset_host
