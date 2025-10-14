@@ -11,6 +11,14 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    services:
+      azurite:
+        image: mcr.microsoft.com/azure-storage/azurite
+        ports:
+          - 10000:10000
+          - 10001:10001
+          - 10002:10002
+
     steps:
     - uses: actions/checkout@v2
     - name: Set up Ruby
@@ -20,9 +28,8 @@ jobs:
         bundler-cache: true
     - name: Init credentials
       run: mv spec/environment.ci.rb spec/environment.rb
+    - name: Wait for Azurite to be ready
+      run: |
+        timeout 30 bash -c 'until nc -z 127.0.0.1 10000; do sleep 1; done'
     - name: Run tests
       run: bundle exec rspec spec
-      env:
-        AZURE_CONTAINER: ${{ secrets.AZURE_CONTAINER }}
-        AZURE_STORAGE_ACCESS_KEY: ${{ secrets.AZURE_STORAGE_ACCESS_KEY }}
-        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}

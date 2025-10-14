@@ -85,9 +85,14 @@ module CarrierWave
             "#{@uploader.asset_host}/#{path}"
           else
             # Old code built a base URI then appended a service SAS token.
-            # We replicate that shape by signing and returning the full URL.
+            # Generate the base URI from the connection's host and append SAS token
             signed = @connection.signed_uri(@path, permissions: "r", expiry: default_expiry)
-            signed.to_s
+            # If we have a storage_blob_host, use it to build the URL with SAS token
+            if @uploader.respond_to?(:azure_storage_blob_host) && @uploader.azure_storage_blob_host
+              "#{@uploader.azure_storage_blob_host}/#{path}?#{service_sas_token(path)}"
+            else
+              signed.to_s
+            end
           end
         end
 
