@@ -38,13 +38,53 @@ end
 
 ## Contributing
 
-In order to run the integration specs you will need to configure some environment variables.
-A sample file is provided as `spec/environment.rb.sample`.
-Copy it over and plug in the appropriate values.
+### Running Tests Locally with Azurite
+
+This project uses [Azurite](https://github.com/Azure/Azurite), an Azure Storage emulator, for running tests locally without requiring real Azure credentials.
+
+#### Quick Start with Docker
+
+1. Start Azurite using Docker:
 
 ```bash
-cp spec/environment.rb.sample spec/environment.rb
+docker run --rm -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
 ```
+
+2. In another terminal, run the tests:
+
+```bash
+cp spec/environment.ci.rb spec/environment.rb
+bundle install
+bundle exec rspec spec
+```
+
+The tests are pre-configured to use Azurite's default credentials and will automatically create the necessary test container.
+
+#### Alternative: Using npm
+
+If you prefer to use npm instead of Docker:
+
+```bash
+npm install -g azurite
+azurite --silent --location /tmp/azurite --debug /tmp/azurite/debug.log
+```
+
+Then run the tests as described above.
+
+### Running Tests with Real Azure Storage
+
+If you need to test against real Azure Storage, create a `spec/environment.rb` file with your Azure credentials:
+
+```ruby
+CarrierWave.configure do |config|
+  config.azure_storage_account_name = 'YOUR STORAGE ACCOUNT NAME'
+  config.azure_storage_access_key = 'YOUR STORAGE ACCESS KEY'
+  config.azure_storage_blob_host = 'YOUR STORAGE BLOB HOST' # optional
+  config.azure_container = 'YOUR CONTAINER NAME'
+end
+```
+
+### Contributing Changes
 
 1. Fork it
 2. Create your feature branch (`git checkout -b my-new-feature`)
