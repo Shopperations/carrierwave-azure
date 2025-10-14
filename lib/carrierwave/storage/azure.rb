@@ -78,21 +78,16 @@ module CarrierWave
           true
         end
 
-        def url(_options = {})
+ def url(_options = {})
           path = ::File.join(@uploader.azure_container, @path)
 
           if @uploader.asset_host
             "#{@uploader.asset_host}/#{path}"
           else
             # Old code built a base URI then appended a service SAS token.
-            # Generate the base URI from the connection's host and append SAS token
+            # We replicate that shape by signing and returning the full URL.
             signed = @connection.signed_uri(@path, permissions: "r", expiry: default_expiry)
-            # If we have a storage_blob_host, use it to build the URL with SAS token
-            if @uploader.respond_to?(:azure_storage_blob_host) && @uploader.azure_storage_blob_host
-              "#{@uploader.azure_storage_blob_host}/#{path}?#{service_sas_token(path)}"
-            else
-              signed.to_s
-            end
+            signed.to_s
           end
         end
 
