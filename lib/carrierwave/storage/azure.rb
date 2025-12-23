@@ -184,8 +184,9 @@ module CarrierWave
         end
 
         def default_expiry
-          # 1 hour default to mimic previous behavior; adjust if you expose a config
-          Time.now.utc + 3600
+          # azure-blob gem expects expiry as a UTC ISO8601 time string
+          # See: https://rubydoc.info/gems/azure-blob/AzureBlob/Client#signed_uri-instance_method
+          (Time.now.utc + 3600).iso8601
         end
       end
     end
