@@ -35,7 +35,7 @@ describe CarrierWave::Storage::Azure do
     it 'should have a url' do
       url = subject.url
       expect(url).to match /^https?:\/\//
-      expect(open(url).read).to eq '1234567890'
+      expect(URI.open(url).read).to eq '1234567890'
     end
 
     it 'should have a content' do
@@ -60,7 +60,7 @@ describe CarrierWave::Storage::Azure do
 
     it 'should be deletable' do
       subject.delete
-      expect{open subject.url}.to raise_error OpenURI::HTTPError
+      expect{URI.open subject.url}.to raise_error OpenURI::HTTPError
     end
   end
 

@@ -7,33 +7,42 @@ describe CarrierWave::Storage::Azure::File do
 
   let(:uploader) { TestUploader.new }
   let(:storage)  { CarrierWave::Storage::Azure.new uploader }
-  let(:sas_token) { 'sas_token' }
 
   describe '#url' do
-    before do
-      allow(uploader).to receive(:azure_container).and_return('test')
-      allow_any_instance_of(CarrierWave::Storage::Azure::File).to receive(:service_sas_token).and_return(sas_token)
-    end
-
-    subject { CarrierWave::Storage::Azure::File.new(uploader, storage.connection, 'dummy.txt').url }
-
-    context 'with storage_blob_host' do
-      before do
-        allow(uploader).to receive(:azure_storage_blob_host).and_return('http://example.com')
-      end
-
-      it 'should return on asset_host' do
-        expect(subject).to eq "http://example.com/test/dummy.txt?#{sas_token}"
-      end
-    end
+    let(:azure_file) { CarrierWave::Storage::Azure::File.new(uploader, storage.connection, 'dummy.txt') }
 
     context 'with asset_host' do
       before do
+        allow(uploader).to receive(:azure_container).and_return('test')
         allow(uploader).to receive(:asset_host).and_return('http://example.com')
       end
 
-      it 'should return on asset_host' do
-        expect(subject).to eq "http://example.com/test/dummy.txt"
+      it 'should return asset_host URL without SAS token' do
+        url = azure_file.url
+        expect(url).to eq "http://example.com/test/dummy.txt"
+      end
+    end
+
+    context 'without asset_host' do
+      before do
+        allow(uploader).to receive(:azure_container).and_return('test')
+        allow(uploader).to receive(:asset_host).and_return(nil)
+      end
+
+      it 'should return a signed URL with SAS token' do
+        url = azure_file.url
+        # Should be a full URL with SAS query parameters
+        expect(url).to match(/^https?:\/\//)
+        expect(url).to include('sig=') # SAS signature
+        expect(url).to include('se=')  # expiry
+        expect(url).to include('sp=')  # permissions
+      end
+
+      it 'should respect expires_in option' do
+        url1 = azure_file.url(expires_in: 7200)
+        url2 = azure_file.url(expires_in: 7200)
+        # Should generate the same URL when called with same expiry
+        expect(url1).to eq(url2)
       end
     end
   end
